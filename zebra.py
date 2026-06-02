@@ -61,6 +61,10 @@ PARK_DELAY = 10
 VOICE_PATH = "/home/pi/test_img/voice_module/bin/zebra.wav"
 COOLDOWN = 0.5
 
+# Continue moving after detection before stopping
+# Estimated distance: ~30cm at SPEED_FORWARD
+DRIVE_AFTER_DETECTION_MS = 500  # Continue driving for 500ms after detection
+
 # Play voice asynchronously
 def play_voice_async():
     print("Playing voice:", VOICE_PATH)
@@ -70,6 +74,8 @@ def play_voice_async():
 
 # Global state
 running = True
+detected = False  # Crosswalk detected, continue driving
+detection_time = 0
 parking = False
 park_start_time = 0
 anti_shake_count = 0
@@ -129,18 +135,35 @@ try:
                 anti_shake_count = 0
 
         now = time.time()
-        if not parking:
+        
+        # State 1: Normal driving - look for crosswalk
+        if not detected and not parking:
             pi.set_PWM_dutycycle(STEER_PIN, STEER_CENTER)
             pi.set_PWM_dutycycle(MOTOR_PIN, SPEED_FORWARD)
             
             if crosswalk_detected and now - last_trigger_time > COOLDOWN:
+                detected = True
+                detection_time = now
+                print("=== Crosswalk detected! Continuing to drive for {}ms ===".format(DRIVE_AFTER_DETECTION_MS))
+        
+        # State 2: Crosswalk detected, continue driving to get closer (about 30cm)
+        elif detected and not parking:
+            pi.set_PWM_dutycycle(STEER_PIN, STEER_CENTER)
+            pi.set_PWM_dutycycle(MOTOR_PIN, SPEED_FORWARD)
+            
+            drive_elapsed_ms = (now - detection_time) * 1000
+            if drive_elapsed_ms >= DRIVE_AFTER_DETECTION_MS:
+                # Now stop at the crosswalk
                 pi.set_PWM_dutycycle(MOTOR_PIN, SPEED_STOP)
                 pi.set_PWM_dutycycle(STEER_PIN, STEER_CENTER)
                 parking = True
                 park_start_time = now
+                detected = False
                 play_voice_async()
-                print("=== Stopping for {} seconds ===".format(PARK_DELAY))
-        else:
+                print("=== Arrived at crosswalk! Stopping for {} seconds ===".format(PARK_DELAY))
+        
+        # State 3: Parking at crosswalk
+        elif parking:
             pi.set_PWM_dutycycle(MOTOR_PIN, SPEED_STOP)
             pi.set_PWM_dutycycle(STEER_PIN, STEER_CENTER)
             
